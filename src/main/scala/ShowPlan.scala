@@ -12,10 +12,14 @@ import model._
 class ShowPlan extends unfiltered.filter.Plan {
   def intent = {
     case req @ PUT(Path(Seg("shows" :: Nil)) & BasicAuth(u, p) & RequestContentType("text/html" :: xs)) =>
-      User where(_.email is u) and (_.password is p) fetchOne() map { _ =>
+      User where(_.email is u) and (_.password is User.hashPass(p)) fetchOne() map { user =>
         Body.bytes(req) >>: IO.write("text/html") fold (
           _ => InternalServerError,
-          k => ResponseString(k.getKeyString)
+          k =>
+            (for {
+              sk <- Show.put(Show(k)).key
+              uk <- User.put(user.copy(shows = sk :: user.shows)).key
+            } yield ResponseString(k.getKeyString)) getOrElse (InternalServerError)
         )
       } getOrElse(Unauthorized)
     
@@ -24,5 +28,11 @@ class ShowPlan extends unfiltered.filter.Plan {
         _                 => NotFound,
         { case (_, bytes) => Html(loadString(new String(bytes, "UTF-8"))) }
       )
-    }
+    
+    case GET(Path("/shows")) =>
+      val list = Show.Kind2Query(Show) fetch(limit = 10) map { s =>
+        <li><a href={"/shows/" + s.content.getKeyString}>{s.created}</a></li>
+      }
+      Html(<ul>{list}</ul>)
+  }
 }
